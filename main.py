@@ -12,6 +12,7 @@ import pystray
 from PIL import Image, ImageDraw
 import shutil
 import os
+import json
 
 def get_foreground_process_name():
     hwnd = win32gui.GetForegroundWindow()
@@ -33,6 +34,7 @@ def set_app_volume(app_name, volume_level):
 
 
 def create_image(width, height, color1, color2):
+    # Generate an image for the system tray icon
     image = Image.new('RGB', (width, height), color1)
     dc = ImageDraw.Draw(image)
     dc.rectangle((0, 0, width, height), fill=color1)
@@ -49,6 +51,9 @@ class VolumeMonitorApp:
         self.last_state = None
         self.tray_icon = None
         self.minimized_to_tray = False
+        self.config_file = os.path.join(os.getenv('APPDATA'), 'AutoVolumeMixer', 'settings.json')
+
+        os.makedirs(os.path.dirname(self.config_file), exist_ok=True)
 
         self.root.protocol('WM_DELETE_WINDOW', self.root.destroy)
 
@@ -56,10 +61,12 @@ class VolumeMonitorApp:
         self.volume_out_var = tk.DoubleVar(value=0.1)
         self.app_name_var = tk.StringVar()
 
+        # App dropdown
         ttk.Label(root, text="Select Application:").grid(row=0, column=0, sticky="e", padx=5, pady=5)
         self.app_dropdown = ttk.Combobox(root, textvariable=self.app_name_var, width=30)
         self.app_dropdown.grid(row=0, column=1, columnspan=2, sticky="w", padx=5, pady=5)
 
+        # Volume sliders
         tk.Label(root, text="Volume when focused:").grid(row=1, column=0, sticky="e", padx=5, pady=5)
         tk.Scale(root, from_=0.0, to=1.0, orient="horizontal", resolution=0.01,
                  variable=self.volume_in_var, length=200).grid(row=1, column=1, sticky="w")
@@ -70,12 +77,18 @@ class VolumeMonitorApp:
                  variable=self.volume_out_var, length=200).grid(row=2, column=1, sticky="w")
         tk.Label(root, textvariable=self.volume_out_var).grid(row=2, column=2, sticky="w", padx=5)
 
+        # Buttons
         self.toggle_button = ttk.Button(root, text="Start", command=self.toggle_monitoring)
         self.toggle_button.grid(row=3, column=0, columnspan=2, pady=10)
 
         self.refresh_button = ttk.Button(root, text="Manual Refresh", command=self.refresh_app_list)
         self.refresh_button.grid(row=0, column=2, pady=10)
 
+        self.save_button = ttk.Button(root, text="Save Current Settings",
+                                      command=self.save_current_settings)
+        self.save_button.grid(row=4, column=0, pady=5)
+
+        # Add minimize to tray button
         self.tray_button = ttk.Button(root, text="▼ Minimize to Tray", command=self.minimize_to_tray)
         self.tray_button.grid(row=3, column=1, pady=10)
 
@@ -85,13 +98,62 @@ class VolumeMonitorApp:
 
         self.check_startup_status()
 
+        # Console
         self.console = scrolledtext.ScrolledText(root, width=70, height=15, state="disabled", font=("Courier", 9))
         self.console.grid(row=5, column=0, columnspan=3, padx=5, pady=10)
 
         self.log("Welcome!")
 
+        # Start auto-refresh
         self.refresh_app_list()
         self.auto_refresh()
+
+    def save_current_settings(self):
+        app_name = self.app_name_var.get().strip()
+        if not app_name:
+            self.log("❌ No application selected to save")
+            return
+
+        try:
+            if os.path.exists(self.config_file):
+                with open(self.config_file, 'r') as f:
+                    all_settings = json.load(f)
+            else:
+                all_settings = {}
+
+            all_settings[app_name] = {
+                'volume_in': self.volume_in_var.get(),
+                'volume_out': self.volume_out_var.get()
+            }
+
+            # Save back to file
+            with open(self.config_file, 'w') as f:
+                json.dump(all_settings, f)
+
+            self.log(f"✅ Saved settings at '{self.config_file}'")
+        except Exception as e:
+            self.log(f"❌ Failed to save settings: {e}")
+
+    def load_app_settings(self, app_name=None):
+        if app_name is None:
+            app_name = self.app_name_var.get().strip()
+            if not app_name:
+                return False
+
+        try:
+            if os.path.exists(self.config_file):
+                with open(self.config_file, 'r') as f:
+                    all_settings = json.load(f)
+
+                if app_name in all_settings:
+                    settings = all_settings[app_name]
+                    self.volume_in_var.set(settings.get('volume_in', 1.0))
+                    self.volume_out_var.set(settings.get('volume_out', 0.1))
+                    self.log(f"🔁 Loaded settings from '{self.config_file}'")
+                    return True
+        except Exception as e:
+            self.log(f"❌ Failed to load settings: {e}")
+        return False
 
     def log(self, message):
         def append():
@@ -121,17 +183,25 @@ class VolumeMonitorApp:
             current_selection = self.app_name_var.get()
             self.app_dropdown['values'] = app_list
 
+            # Add binding to load settings when app is selected
+            def on_app_selected(event):
+                self.load_app_settings()
+
+            self.app_dropdown.bind('<<ComboboxSelected>>', on_app_selected)
+
             if current_selection in app_list:
                 self.app_name_var.set(current_selection)
+                self.load_app_settings()
             elif app_list:
                 self.app_name_var.set(app_list[0])
+                self.load_app_settings()
             else:
                 self.app_name_var.set("")
             self.log("Refreshed App List")
 
     def auto_refresh(self):
         self.refresh_app_list()
-        self.root.after(10000, self.auto_refresh)
+        self.root.after(10000, self.auto_refresh)  # refresh every second
 
     def toggle_monitoring(self):
         if not self.running:
@@ -194,9 +264,10 @@ class VolumeMonitorApp:
         self.log("Reset audio levels to 1.0")
 
     def minimize_to_tray(self):
-        self.root.withdraw()
+        self.root.withdraw()  # Hide the main window
         self.minimized_to_tray = True
 
+        # Create system tray icon
         image = create_image(64, 64, 'black', 'white')
         menu = pystray.Menu(
             pystray.MenuItem('Show', self.restore_from_tray),
@@ -208,6 +279,7 @@ class VolumeMonitorApp:
 
         self.tray_icon = pystray.Icon("volume_monitor", image, "Auto Volume Mixer", menu)
 
+        # Run the tray icon in a separate thread
         threading.Thread(target=self.tray_icon.run, daemon=True).start()
         self.log("Minimized to system tray")
 
@@ -217,8 +289,8 @@ class VolumeMonitorApp:
             self.tray_icon = None
 
         self.minimized_to_tray = False
-        self.root.deiconify()
-        self.root.lift()
+        self.root.deiconify()  # Show the main window
+        self.root.lift()  # Bring to top
         self.log("Restored from system tray")
         self.refresh_app_list()
 
