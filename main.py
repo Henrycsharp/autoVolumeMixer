@@ -9,11 +9,51 @@ import psutil
 import pythoncom
 from pycaw.pycaw import AudioUtilities, ISimpleAudioVolume
 import pystray
+from pystray import MenuItem as item
 from PIL import Image, ImageDraw
 import shutil
 import os
 import json
 
+DARK_THEME = {
+    'bg': '#1a1a1a',
+    'fg': '#e0e0e0',
+    'entry_bg': '#2a2a2a',
+    'entry_fg': '#ffffff',
+    'console_bg': '#121212',
+    'console_fg': '#d0d0d0',
+    'button_bg': '#2a2a2a',
+    'button_fg': '#ffffff',
+    'slider_bg': '#2a2a2a',
+    'slider_fg': '#ffffff',
+    'select_bg': '#3a3a3a',
+    'select_fg': '#ffffff',
+    'dropdown_bg': '#2a2a2a',
+    'dropdown_fg': '#ffffff',
+    'dropdown_field_bg': '#2a2a2a',
+    'dropdown_arrow': '#ffffff',
+    'disabled_fg': '#707070'
+}
+
+LIGHT_THEME = {
+    'bg': '#f0f0f0',
+    'fg': '#000000',
+    'entry_bg': '#ffffff',
+    'entry_fg': '#000000',
+    'console_bg': '#ffffff',
+    'console_fg': '#000000',
+    'button_bg': '#e0e0e0',
+    'button_fg': '#000000',
+    'slider_bg': '#e0e0e0',
+    'slider_fg': '#000000',
+    'select_bg': '#d0d0d0',
+    'select_fg': '#000000',
+    'dropdown_bg': '#ffffff',
+    'dropdown_fg': '#000000',
+    'dropdown_field_bg': '#ffffff',
+    'dropdown_arrow': '#000000',
+    'disabled_fg': '#a0a0a0'
+}
 def get_foreground_process_name():
     hwnd = win32gui.GetForegroundWindow()
     _, pid = win32process.GetWindowThreadProcessId(hwnd)
@@ -34,17 +74,18 @@ def set_app_volume(app_name, volume_level):
 
 
 def create_image(width, height, color1, color2):
-    # Generate an image for the system tray icon
     image = Image.new('RGB', (width, height), color1)
     dc = ImageDraw.Draw(image)
     dc.rectangle((0, 0, width, height), fill=color1)
-    dc.rectangle((width // 4, height // 4, 3 * width // 4, 3 * height // 4), fill=color2)
+    dc.ellipse((width // 4, height // 4, 3 * width // 4, 3 * height // 4), fill=color2)
     return image
+
 
 
 class VolumeMonitorApp:
     def __init__(self, root):
         self.root = root
+        self.root.iconbitmap("C:\\Users\\henym\\Downloads\\Screenshot 2025-07-21 011221.ico")
         self.root.title("Auto Volume Mixer")
         self.running = False
         self.thread = None
@@ -84,9 +125,13 @@ class VolumeMonitorApp:
         self.refresh_button = ttk.Button(root, text="Manual Refresh", command=self.refresh_app_list)
         self.refresh_button.grid(row=0, column=2, pady=10)
 
-        self.save_button = ttk.Button(root, text="Save Current Settings",
-                                      command=self.save_current_settings)
+        self.save_button = ttk.Button(root, text="Save Current Settings", command=self.save_current_settings)
         self.save_button.grid(row=4, column=0, pady=5)
+
+        # Add dark mode toggle button
+        self.dark_mode_var = tk.BooleanVar(value=False)
+        self.dark_mode_button = ttk.Button(root, text="🌙 Dark Mode", command=self.toggle_dark_mode)
+        self.dark_mode_button.grid(row=4, column=1, pady=5)
 
         # Add minimize to tray button
         self.tray_button = ttk.Button(root, text="▼ Minimize to Tray", command=self.minimize_to_tray)
@@ -107,6 +152,103 @@ class VolumeMonitorApp:
         # Start auto-refresh
         self.refresh_app_list()
         self.auto_refresh()
+
+    def toggle_dark_mode(self):
+        """Toggle between dark and light mode"""
+        self.dark_mode_var.set(not self.dark_mode_var.get())
+        self.apply_theme()
+
+    def apply_theme(self):
+        """Apply the current theme (dark or light)"""
+        theme = DARK_THEME if self.dark_mode_var.get() else LIGHT_THEME
+
+        # Update button text
+        self.dark_mode_button.config(text="🌞 Light Mode" if self.dark_mode_var.get() else "🌙 Dark Mode")
+
+        # Apply theme to root window
+        self.root.configure(bg=theme['bg'])
+
+        # Apply to all standard widgets
+        for child in self.root.winfo_children():
+            if isinstance(child, tk.Label):
+                child.configure(bg=theme['bg'], fg=theme['fg'])
+            elif isinstance(child, tk.Scale):
+                child.configure(
+                    bg=theme['slider_bg'],
+                    fg=theme['slider_fg'],
+                    highlightbackground=theme['bg'],
+                    troughcolor=theme['bg'],
+                    activebackground=theme['select_bg']
+                )
+
+        # Special handling for console
+        self.console.configure(
+            bg=theme['console_bg'],
+            fg=theme['console_fg'],
+            insertbackground=theme['console_fg']
+        )
+
+        # Create and configure ttk style
+        style = ttk.Style()
+        style.theme_use('clam')  # Best theme for customization
+
+        # Configure general styles
+        style.configure('.',
+                        background=theme['bg'],
+                        foreground=theme['fg'],
+                        fieldbackground=theme['entry_bg'])
+
+        # Button styling
+        style.configure('TButton',
+                        background=theme['button_bg'],
+                        foreground=theme['button_fg'],
+                        bordercolor=theme['bg'],
+                        darkcolor=theme['button_bg'],
+                        lightcolor=theme['button_bg'])
+
+        # Combobox styling (dropdown)
+        style.configure('TCombobox',
+                        fieldbackground=theme['dropdown_field_bg'],
+                        background=theme['dropdown_bg'],
+                        foreground=theme['dropdown_fg'],
+                        selectbackground=theme['select_bg'],
+                        selectforeground=theme['select_fg'],
+                        arrowcolor=theme['dropdown_arrow'])
+
+        style.map('TCombobox',
+                  fieldbackground=[('readonly', theme['dropdown_field_bg'])],
+                  selectbackground=[('readonly', theme['select_bg'])],
+                  selectforeground=[('readonly', theme['select_fg'])])
+
+        # Checkbutton styling
+        style.configure('TCheckbutton',
+                        background=theme['bg'],
+                        foreground=theme['fg'],
+                        indicatorbackground=theme['entry_bg'])
+
+        # Entry styling
+        style.configure('TEntry',
+                        fieldbackground=theme['entry_bg'],
+                        foreground=theme['entry_fg'],
+                        insertcolor=theme['entry_fg'])
+
+        # Disabled state styling
+        style.map('TButton',
+                  background=[('disabled', theme['bg'])],
+                  foreground=[('disabled', theme['disabled_fg'])])
+
+        style.map('TEntry',
+                  fieldbackground=[('disabled', theme['bg'])],
+                  foreground=[('disabled', theme['disabled_fg'])])
+
+        style.map('TCombobox',
+                  fieldbackground=[('disabled', theme['bg'])],
+                  foreground=[('disabled', theme['disabled_fg'])])
+
+        # Force update of all widgets
+        self.app_dropdown.update_idletasks()
+        for child in self.root.winfo_children():
+            child.update_idletasks()
 
     def save_current_settings(self):
         app_name = self.app_name_var.get().strip()
@@ -270,8 +412,9 @@ class VolumeMonitorApp:
         # Create system tray icon
         image = create_image(64, 64, 'black', 'white')
         menu = pystray.Menu(
-            pystray.MenuItem('Show', self.restore_from_tray),
-            pystray.MenuItem('Exit', self.quit_application)
+            item('AVM V1.2', self.restore_from_tray),
+            item('Show', self.restore_from_tray),
+            item('Exit', self.quit_application)
         )
 
         if self.tray_icon:
@@ -289,14 +432,17 @@ class VolumeMonitorApp:
             self.tray_icon = None
 
         self.minimized_to_tray = False
-        self.root.deiconify()  # Show the main window
-        self.root.lift()  # Bring to top
+        self.root.deiconify()
+        self.root.lift()
         self.log("Restored from system tray")
         self.refresh_app_list()
 
     def quit_application(self, icon=None, item=None):
         if self.tray_icon:
             self.tray_icon.stop()
+        self.volume_out_var.set(1.0)
+        self.volume_in_var.set(1.0)
+        set_app_volume(self.app_name, 1.0)
         self.running = False
         self.root.quit()
 
